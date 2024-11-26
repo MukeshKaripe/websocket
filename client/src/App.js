@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import io from 'socket.io-client';
 import Chart from './component/Chart';
+import AnimatedText from './component/AnimatedText';
+import ChatConversation from './component/Conversation';
 
 // Initialize socket outside component to prevent multiple connections
 let socket;
@@ -72,6 +74,7 @@ function App() {
     <div className="App flex justify-center items-center w-full h-dvh">
       {!showChat ? (
         <div className="room-socket flex justify-center flex-col items-center gap-2 w-[300px]">
+          <AnimatedText/>
           <h2 className="text-2xl font-bold mb-4">
             Let's Chat
           </h2>
@@ -100,7 +103,8 @@ function App() {
           </button>
         </div>
       ) : (
-        <Chart socket={socket} userName={userName} room={room} />
+        // <Chart socket={socket} userName={userName} room={room} />
+        <ChatConversation socket={socket} userName={userName} room={room} /> 
       )}
     </div>
   );
