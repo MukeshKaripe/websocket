@@ -1,22 +1,21 @@
 import { useState, useEffect } from 'react';
 import io from 'socket.io-client';
-import Chart from './component/Chart';
-import AnimatedText from './component/AnimatedText';
 import ChatConversation from './component/Conversation';
+import { Card, CardHeader, CardContent, Button } from '@mui/material';
+import AnimatedText from './component/AnimatedText';
 
-// Initialize socket outside component to prevent multiple connections
 let socket;
 
-function App() {
+const App = () => {
   const [userName, setUsername] = useState("");
-  const [room, setRoom] = useState("");
-  const [showChat, setShowChat] = useState(false);
+  const [selectedUser, setSelectedUser] = useState(null);
   const [connectionError, setConnectionError] = useState("");
+  const [defaultUsers, setDefaultUsers] = useState([]);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [step, setStep] = useState('username');
 
   useEffect(() => {
-    // Initialize socket connection
-    const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-    console.log('Connecting to:', BACKEND_URL); // Debug log
+    const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:3001';
 
     socket = io(BACKEND_URL, {
       transports: ['websocket'],
@@ -25,9 +24,8 @@ function App() {
       reconnectionDelay: 1000
     });
 
-    // Connection event handlers
     socket.on('connect', () => {
-      console.log('Connected to server with ID:', socket.id);
+      console.log('Connected to server:', socket.id);
       setConnectionError("");
     });
 
@@ -36,78 +34,144 @@ function App() {
       setConnectionError("Failed to connect to chat server");
     });
 
-    socket.on('disconnect', () => {
-      console.log('Disconnected from server');
+    socket.on('default_users', (users) => {
+      console.log('Received users:', users);
+      setDefaultUsers(users);
     });
 
-    // Cleanup on component unmount
+    socket.on('registration_success', (user) => {
+      console.log('Registration successful:', user);
+      setCurrentUser(user);
+      setStep('select-user');
+    });
+
+    socket.on('error', (error) => {
+      setConnectionError(error.message);
+    });
+
     return () => {
-      if (socket) {
-        socket.disconnect();
-      }
+      if (socket) socket.disconnect();
     };
   }, []);
 
-  const joinRoom = () => {
+  const handleUsernameSubmit = (e) => {
+    e.preventDefault();
+
     if (!socket?.connected) {
       setConnectionError("Not connected to server");
       return;
     }
 
-    if (userName.trim() === "" || room.trim() === "") {
-      setConnectionError("Username and room name are required");
+    if (userName.trim() === "") {
+      setConnectionError("Username is required");
       return;
     }
 
+    // Register user with server
+    socket.emit("register_user", userName.trim());
+  };
+
+  const handleUserSelect = (user) => {
+    if (user.name === currentUser.name) {
+      setConnectionError("Cannot chat with yourself");
+      return;
+    }
+
+    setSelectedUser(user);
+    const roomName = `private_${[currentUser.name, user.name].sort().join('_')}`;
+
     try {
-      socket.emit("join_room", room);
-      console.log('Joining room:', room); // Debug log
-      setShowChat(true);
-      setConnectionError("");
+      socket.emit("join_room", {
+        userName: currentUser.name,
+        room: roomName
+      });
+      setStep('chat');
     } catch (error) {
-      console.error('Error joining room:', error);
-      setConnectionError("Failed to join room");
+      console.error('Error joining chat:', error);
+      setConnectionError("Failed to start chat");
     }
   };
 
-  return (
-    <div className="App flex justify-center items-center w-full h-dvh">
-      {!showChat ? (
+  const renderUsernameStep = () => (
+    <form onSubmit={handleUsernameSubmit}  className="App flex justify-center items-center w-full flex-col h-dvh">
+      <div className='flex flex-col gap-2 shadow-2xl  max-w-[500px] p-4 '>
         <div className="room-socket flex justify-center flex-col items-center gap-2 w-[300px]">
-          <AnimatedText/>
-          <h2 className="text-2xl font-bold mb-4">
-            Let's Chat
-          </h2>
-          {connectionError && (
-            <div className="text-red-500 text-sm mb-2">{connectionError}</div>
-          )}
+          <AnimatedText />
+        </div>
+        <h2 className="text-2xl text-center font-semibold mb-4">
+          Let's Chat
+        </h2>
+        <div>
           <input
-            className="p-2 border border-indigo-500 w-full rounded"
             type="text"
-            placeholder="Enter your name"
+            placeholder="Enter your username"
             value={userName}
             onChange={(e) => setUsername(e.target.value)}
-          />
-          <input
             className="p-2 border border-indigo-500 w-full rounded"
-            type="text"
-            placeholder="Enter room name"
-            value={room}
-            onChange={(e) => setRoom(e.target.value)}
           />
-          <button
-            className="bg-indigo-500 text-white px-3 py-2 w-full rounded hover:bg-indigo-600 transition-colors"
-            onClick={joinRoom}
-          >
-            Join Room
-          </button>
         </div>
-      ) : (
-        // <Chart socket={socket} userName={userName} room={room} />
-        <ChatConversation socket={socket} userName={userName} room={room} /> 
-      )}
+        <button
+          className="bg-indigo-500 text-white px-3 py-2 w-full rounded hover:bg-indigo-600 transition-colors">
+          Continue...
+        </button>
+      </div>
+    </form>
+  );
+
+  const renderUserSelection = () => (
+    <Card className="w-full max-w-md mx-auto mt-8">
+      <div className="text-2xl font-semibold text-center p-4">
+        Select a User to Chat With
+      </div>
+      <CardContent>
+        <div className="space-y-2 flex flex-wrap items-center">
+          {defaultUsers
+            .filter(user => user.name !== currentUser?.name)
+            .map((user) => (
+              <Button
+                key={user.id}
+                onClick={() => handleUserSelect(user)}
+                className="w-1/2 text-left justify-start p-4 hover:bg-gray-100 bg-gray-800"
+              >
+                {user.name}
+                {user.isDefaultUser && " (Default User)"}
+              </Button>
+            ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+
+  const renderChat = () => (
+    <div className="w-full max-w-4xl mx-auto mt-8">
+      <Card>
+        <div className="text-xl font-bold p-4">
+          Chat with {selectedUser?.name}
+        </div>
+        <CardContent>
+          <ChatConversation
+            socket={socket}
+            userName={currentUser.name}
+            room={`private_${[currentUser.name, selectedUser.name].sort().join('_')}`}
+          />
+        </CardContent>
+      </Card>
     </div>
   );
-}
+
+  return (
+    <div className="container mx-auto p-4">
+      {connectionError && (
+        <div className="text-red-500 text-center mb-4">
+          {connectionError}
+        </div>
+      )}
+
+      {step === 'username' && renderUsernameStep()}
+      {step === 'select-user' && renderUserSelection()}
+      {step === 'chat' && renderChat()}
+    </div>
+  );
+};
 
 export default App;

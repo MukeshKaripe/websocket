@@ -1,19 +1,20 @@
-import React, { useEffect, useState } from 'react';
-import { Smile, Paperclip, Send, X, Edit2, Trash2, Bell } from 'lucide-react';
+import React, { useEffect, useState, useRef } from 'react';
+import { Smile, Paperclip, Send, X, Bell } from 'lucide-react';
 import data from '@emoji-mart/data';
 import Picker from '@emoji-mart/react';
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
 } from "./AlertComponets";
+import MessageBubble from '../component/postBanner';
 
-const ChatConversation = ({ socket, userName }) => {
+const ChatConversation = ({ socket, userName, room }) => {
     const [message, setMessage] = useState('');
     const [messages, setMessages] = useState([]);
     const [isConnected, setIsConnected] = useState(false);
@@ -22,15 +23,87 @@ const ChatConversation = ({ socket, userName }) => {
     const [editingMessageId, setEditingMessageId] = useState(null);
     const [showDeleteDialog, setShowDeleteDialog] = useState(false);
     const [messageToDelete, setMessageToDelete] = useState(null);
-    const [users, setUsers] = useState([
-        // Default 10 users
-        { id: 1, name: 'User 1' },
-        { id: 2, name: 'User 2' },
-        // ... add more default users
-    ]);
     const [unreadCount, setUnreadCount] = useState(0);
+    
+    const fileInputRef = useRef(null);
+    const messagesEndRef = useRef(null);
 
-    // Handle message editing
+    const scrollToBottom = () => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    };
+
+    useEffect(() => {
+        scrollToBottom();
+    }, [messages]);
+
+    useEffect(() => {
+        if (!socket) return;
+
+        setIsConnected(socket.connected);
+
+        const onConnect = () => {
+            setIsConnected(true);
+            console.log('Socket connected');
+            socket.emit('join_room', { roomName: room, userName });
+        };
+
+        const onDisconnect = () => {
+            setIsConnected(false);
+            console.log('Socket disconnected');
+        };
+
+        const onReceiveMessage = (data) => {
+            setMessages(prev => [...prev, { ...data, isSender: data.author === userName }]);
+            if (!document.hasFocus()) {
+                setUnreadCount(prev => prev + 1);
+            }
+        };
+
+        socket.on('connect', onConnect);
+        socket.on('disconnect', onDisconnect);
+        socket.on('receive_message', onReceiveMessage);
+        socket.on('message_edited', handleMessageEdit);
+        socket.on('message_deleted', handleMessageDelete);
+
+        if (socket && !socket.connected) {
+            socket.connect();
+        }
+
+        return () => {
+            if (socket) {
+                socket.off('connect', onConnect);
+                socket.off('disconnect', onDisconnect);
+                socket.off('receive_message', onReceiveMessage);
+                socket.off('message_edited', handleMessageEdit);
+                socket.off('message_deleted', handleMessageDelete);
+            }
+        };
+    }, [socket, userName, room]);
+
+    const handleMessageEdit = (data) => {
+        setMessages(prev => prev.map(m => 
+            m.id === data.id ? { ...data, isSender: m.isSender } : m
+        ));
+    };
+
+    const handleMessageDelete = (data) => {
+        setMessages(prev => prev.filter(m => m.id !== data.messageId));
+    };
+
+    const handleFileSelect = (e) => {
+        const file = e.target.files[0];
+        if (file && file.size <= 5 * 1024 * 1024) { // 5MB limit
+            setSelectedFile(file);
+        } else {
+            alert('File size should be less than 5MB');
+        }
+    };
+
+    const handleEmojiSelect = (emoji) => {
+        setMessage(prev => prev + emoji.native);
+        setShowEmojiPicker(false);
+    };
+
     const startEditing = (messageId) => {
         const messageToEdit = messages.find(m => m.id === messageId);
         if (messageToEdit && messageToEdit.author === userName) {
@@ -39,7 +112,6 @@ const ChatConversation = ({ socket, userName }) => {
         }
     };
 
-    // Handle message deletion
     const initiateDelete = (messageId) => {
         setMessageToDelete(messageId);
         setShowDeleteDialog(true);
@@ -49,7 +121,7 @@ const ChatConversation = ({ socket, userName }) => {
         if (messageToDelete) {
             socket.emit('delete_message', {
                 messageId: messageToDelete,
-                roomName: 'default',
+                roomName: room,
                 author: userName
             });
             setMessages(prev => prev.filter(m => m.id !== messageToDelete));
@@ -82,7 +154,7 @@ const ChatConversation = ({ socket, userName }) => {
 
             const messageData = {
                 id: editingMessageId || Date.now().toString(),
-                roomName: 'default',
+                roomName: room,
                 author: userName,
                 message: message.trim(),
                 time: new Date().toLocaleTimeString([], { 
@@ -90,125 +162,35 @@ const ChatConversation = ({ socket, userName }) => {
                     minute: '2-digit'
                 }),
                 attachment,
-                isSender: true,
                 isEdited: !!editingMessageId
             };
 
             if (editingMessageId) {
                 socket.emit("edit_message", messageData);
                 setMessages(prev => prev.map(m => 
-                    m.id === editingMessageId ? messageData : m
+                    m.id === editingMessageId ? { ...messageData, isSender: true } : m
                 ));
                 setEditingMessageId(null);
             } else {
                 socket.emit("send_message", messageData);
-                setMessages(prev => [...prev, messageData]);
+                setMessages(prev => [...prev, { ...messageData, isSender: true }]);
             }
 
             setMessage('');
             setSelectedFile(null);
+            if (fileInputRef.current) {
+                fileInputRef.current.value = '';
+            }
         } catch (error) {
             console.error('Error sending message:', error);
         }
     };
 
-    // Enhanced Message Bubble Component
-    const MessageBubble = ({ data, onEdit, onDelete }) => (
-        <div className={`flex ${data.isSender ? 'justify-end' : 'justify-start'} mb-4`}>
-            <div className={`max-w-[70%] ${data.isSender ? 'bg-blue-500 text-white' : 'bg-gray-200'} rounded-lg px-4 py-2`}>
-                <div className="flex items-center justify-between">
-                    <span className="font-semibold text-sm">
-                        {data.isSender ? 'You' : data.author}
-                    </span>
-                    {data.isSender && (
-                        <div className="flex gap-2 ml-2">
-                            <button 
-                                onClick={() => onEdit(data.id)}
-                                className="opacity-60 hover:opacity-100"
-                            >
-                                <Edit2 size={14} />
-                            </button>
-                            <button 
-                                onClick={() => onDelete(data.id)}
-                                className="opacity-60 hover:opacity-100"
-                            >
-                                <Trash2 size={14} />
-                            </button>
-                        </div>
-                    )}
-                </div>
-                {data.message && (
-                    <p className="mt-1 text-sm whitespace-pre-wrap">
-                        {data.message}
-                        {data.isEdited && (
-                            <span className="text-xs opacity-75 ml-2">(edited)</span>
-                        )}
-                    </p>
-                )}
-                {/* ... rest of the MessageBubble component ... */}
-                <span className="text-xs opacity-75 block text-right mt-1">
-                    {data.time}
-                </span>
-            </div>
-        </div>
-    );
-
-    // Socket event handlers
-    useEffect(() => {
-        if (!socket) return;
-
-        const handleReceiveMessage = (data) => {
-            try {
-                if (!document.hasFocus()) {
-                    setUnreadCount(prev => prev + 1);
-                    // Show browser notification
-                    if (Notification.permission === "granted") {
-                        new Notification("New Message", {
-                            body: `${data.author}: ${data.message}`
-                        });
-                    }
-                }
-                setMessages(prev => [...prev, { ...data, isSender: false }]);
-            } catch (error) {
-                console.error('Error handling received message:', error);
-            }
-        };
-
-        const handleMessageEdit = (data) => {
-            setMessages(prev => prev.map(m => 
-                m.id === data.id ? { ...data, isSender: m.isSender } : m
-            ));
-        };
-
-        const handleMessageDelete = (data) => {
-            setMessages(prev => prev.filter(m => m.id !== data.messageId));
-        };
-
-        socket.on("receive_message", handleReceiveMessage);
-        socket.on("message_edited", handleMessageEdit);
-        socket.on("message_deleted", handleMessageDelete);
-
-        return () => {
-            if (socket) {
-                socket.off("receive_message", handleReceiveMessage);
-                socket.off("message_edited", handleMessageEdit);
-                socket.off("message_deleted", handleMessageDelete);
-            }
-        };
-    }, [socket]);
-
-    // Reset unread count when window gains focus
-    useEffect(() => {
-        const handleFocus = () => setUnreadCount(0);
-        window.addEventListener('focus', handleFocus);
-        return () => window.removeEventListener('focus', handleFocus);
-    }, []);
-
     return (
         <div className="w-full max-w-2xl border border-gray-200 rounded-lg shadow-lg">
             <div className="border-b p-4 bg-white rounded-t-lg">
                 <div className="flex items-center justify-between">
-                    <h2 className="text-xl font-semibold">Live ChatConversation</h2>
+                    <h2 className="text-xl font-semibold">Live Chat</h2>
                     {unreadCount > 0 && (
                         <div className="flex items-center gap-2">
                             <Bell size={16} className="text-blue-500" />
@@ -231,15 +213,76 @@ const ChatConversation = ({ socket, userName }) => {
                             onDelete={initiateDelete}
                         />
                     ))}
+                    <div ref={messagesEndRef} />
                 </div>
             </div>
 
-            {/* Message Input Form */}
             <form onSubmit={sendMessage} className="border-t p-4 bg-white rounded-b-lg">
-                {/* ... existing form content ... */}
+                <div className="flex items-center gap-2">
+                    <div className="flex items-end gap-2">
+                    <button
+                            type="button"
+                            onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                            className="p-2 text-gray-500 hover:text-gray-700"
+                        >
+                            <Smile size={20} />
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => fileInputRef.current?.click()}
+                            className="p-2 text-gray-500 hover:text-gray-700"
+                        >
+                            <Paperclip size={20} />
+                        </button>
+                    </div>
+                    <div className="flex-1 flex item-center">
+                        <textarea
+                            value={message}
+                            onChange={(e) => setMessage(e.target.value)}
+                            placeholder="Type a message..."
+                            className="w-full p-2 border rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                        {selectedFile && (
+                            <div className="mt-2 p-2 bg-gray-100 rounded-lg flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                    <Paperclip size={16} />
+                                    <span className="text-sm truncate">{selectedFile.name}</span>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedFile(null)}
+                                    className="text-gray-500 hover:text-gray-700"
+                                >
+                                    <X size={16} />
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                        <button
+                            type="submit"
+                            className="bg-blue-500 text-white p-2 rounded-lg hover:bg-blue-600"
+                        >
+                            <Send size={20} />
+                        </button>
+                </div>
+                <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleFileSelect}
+                    className="hidden"
+                    accept="image/*,.pdf,.doc,.docx"
+                />
+                {showEmojiPicker && (
+                    <div className="absolute bottom-20 right-4">
+                        <Picker
+                            data={data}
+                            onEmojiSelect={handleEmojiSelect}
+                            theme="light"
+                        />
+                    </div>
+                )}
             </form>
 
-            {/* Delete Confirmation Dialog */}
             <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
                 <AlertDialogContent>
                     <AlertDialogHeader>

@@ -4,7 +4,6 @@ const http = require("http");
 const cors = require("cors");
 const { Server } = require("socket.io");
 
-// Load environment variables
 require('dotenv').config();
 
 app.use(cors());
@@ -12,49 +11,94 @@ app.use(express.json({ limit: '10mb' }));
 
 const server = http.createServer(app);
 
-// Add basic health check endpoint
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'healthy' });
-});
+// Initialize with default users and their chat histories
+const defaultUsers = [
+    { id: 'user1', name: 'John Doe' },
+    { id: 'user2', name: 'Jane Smith' },
+    { id: 'user3', name: 'siri' },
+
+    // ... other users
+];
+
+// Store active users, their sockets, and messages
+const connectedUsers = new Map(); // socket.id -> { userName, currentRoom }
+const userSockets = new Map();    // userName -> socket.id
+const messageHistory = new Map();  // roomName -> messages[]
 
 const io = new Server(server, {
     cors: {
-        // Allow all origins in development, restrict in production
         origin: "*",
         methods: ["GET", "POST"],
         credentials: true
     },
-    maxHttpBufferSize: 1e8, // 100 MB
+    maxHttpBufferSize: 1e8,
     pingTimeout: 60000,
     transports: ['websocket', 'polling']
 });
 
-// Track connected users and rooms
-const connectedUsers = new Map();
-const activeRooms = new Set();
-
 io.on("connection", (socket) => {
     console.log("User Connected:", socket.id);
-    connectedUsers.set(socket.id, { rooms: new Set() });
 
-    socket.on("join_room", (roomName) => {
+    // Send default users list on connection
+    socket.emit('default_users', defaultUsers);
+
+    // Handle user registration/login
+    socket.on("register_user", (userName) => {
         try {
-            if (typeof roomName !== 'string' || !roomName.trim()) {
-                throw new Error('Invalid room name');
+            // Check if username exists in default users
+            const existingDefaultUser = defaultUsers.find(u => u.name === userName);
+            
+            if (existingDefaultUser) {
+                // If user exists in default users, associate socket
+                userSockets.set(userName, socket.id);
+                socket.emit('registration_success', { 
+                    ...existingDefaultUser,
+                    isDefaultUser: true 
+                });
+            } else {
+                // Create new user
+                const newUser = {
+                    id: `user_${Date.now()}`,
+                    name: userName,
+                    isDefaultUser: false
+                };
+                defaultUsers.push(newUser);
+                userSockets.set(userName, socket.id);
+                socket.emit('registration_success', newUser);
             }
 
-            socket.join(roomName);
-            connectedUsers.get(socket.id).rooms.add(roomName);
-            activeRooms.add(roomName);
+            // Broadcast updated users list
+            io.emit('default_users', defaultUsers);
+        } catch (error) {
+            console.error('Registration error:', error);
+            socket.emit('error', { message: 'Failed to register user' });
+        }
+    });
 
-            console.log(`User ${socket.id} joined room: ${roomName}`);
-            console.log('Active rooms:', Array.from(activeRooms));
+    // Join room handler
+    socket.on("join_room", (data) => {
+        try {
+            const { userName, room } = data;
+            
+            // Leave current room if any
+            const currentUser = connectedUsers.get(socket.id);
+            if (currentUser && currentUser.currentRoom) {
+                socket.leave(currentUser.currentRoom);
+            }
 
-            // Notify room members about new join
-            io.to(roomName).emit('user_joined', {
+            // Join new room
+            socket.join(room);
+            connectedUsers.set(socket.id, { userName, currentRoom: room });
+
+            // Get existing messages for this room
+            const roomMessages = messageHistory.get(room) || [];
+            socket.emit('message_history', roomMessages);
+
+            // Notify room members
+            io.to(room).emit('user_joined', {
                 userId: socket.id,
-                roomName: roomName,
-                timestamp: new Date()
+                userName,
+                room
             });
         } catch (error) {
             console.error('Error joining room:', error);
@@ -62,44 +106,44 @@ io.on("connection", (socket) => {
         }
     });
 
+    // Send message handler
     socket.on("send_message", (data) => {
         try {
-            if (!data || !data.roomName || !data.message) {
-                throw new Error('Invalid message data');
-            }
+            const messageId = Date.now().toString();
+            const messageData = {
+                ...data,
+                id: messageId,
+                timestamp: new Date().toISOString()
+            };
 
-            console.log(`Message in room ${data.roomName} from ${socket.id}:`, data.message);
-            socket.to(data.roomName).emit("receive_message", data);
+            // Store in history
+            if (!messageHistory.has(data.roomName)) {
+                messageHistory.set(data.roomName, []);
+            }
+            messageHistory.get(data.roomName).push(messageData);
+
+            // Broadcast to room
+            socket.to(data.roomName).emit("receive_message", messageData);
         } catch (error) {
             console.error('Error sending message:', error);
             socket.emit('error', { message: 'Failed to send message' });
         }
     });
 
+    // ... (keep existing edit_message and delete_message handlers)
+
     socket.on("disconnect", () => {
         const userData = connectedUsers.get(socket.id);
         if (userData) {
-            // Clean up user's rooms
-            userData.rooms.forEach(room => {
-                io.to(room).emit('user_left', { userId: socket.id, room });
+            userSockets.delete(userData.userName);
+            connectedUsers.delete(socket.id);
+            io.to(userData.currentRoom).emit('user_left', {
+                userId: socket.id,
+                userName: userData.userName
             });
         }
-        connectedUsers.delete(socket.id);
         console.log("User Disconnected:", socket.id);
     });
 });
 
-const PORT = process.env.PORT || 3001;
-
-server.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on port ${PORT}`);
-});
-
-// Handle server errors
-server.on('error', (error) => {
-    console.error('Server error:', error);
-});
-
-process.on('unhandledRejection', (error) => {
-    console.error('Unhandled promise rejection:', error);
-});
+server.listen(process.env.PORT || 3001);
