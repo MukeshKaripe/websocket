@@ -11,7 +11,6 @@ const AnimatedText = () => {
             const timeOut = setTimeout(() => {
                 setText(prev => prev + inptText[displayChar])
                 setDisplayChar(prev => prev + 1)
-
             }, 500);
             return () => clearTimeout(timeOut);
 
@@ -23,7 +22,7 @@ const AnimatedText = () => {
             {text}
             <span>|</span>
         </h2>
-        <span> <bold>Enter Room Number:</bold> 143</span>
+        {/* <span> <bold>Enter Room Number:</bold> 143</span> */}
     </>)
 }
 export default AnimatedText;

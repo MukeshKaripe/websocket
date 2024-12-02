@@ -1,5 +1,6 @@
 import React from 'react';
 import { Paperclip, Edit2, Trash2 } from 'lucide-react';
+import { MessageActions } from './MessageActions';
 
 
 const MessageBubble = ({ data, onEdit, onDelete }) => (
@@ -10,20 +11,11 @@ const MessageBubble = ({ data, onEdit, onDelete }) => (
                     {data.isSender ? 'You' : data.author}
                 </span>
                 {data.isSender && (
-                    <div className="flex gap-2 ml-2">
-                        <button 
-                            onClick={() => onEdit(data.id)}
-                            className="opacity-60 hover:opacity-100"
-                        >
-                            <Edit2 size={14} />
-                        </button>
-                        <button 
-                            onClick={() => onDelete(data.id)}
-                            className="opacity-60 hover:opacity-100"
-                        >
-                            <Trash2 size={14} />
-                        </button>
-                    </div>
+                     <MessageActions
+                     messageId={data.id}
+                     onEdit={onEdit}
+                     onDelete={onDelete}
+                   />
                 )}
             </div>
             {data.message && (

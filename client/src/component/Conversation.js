@@ -13,8 +13,11 @@ import {
     AlertDialogTitle,
 } from "./AlertComponets";
 import MessageBubble from '../component/postBanner';
+import NotificationManager from './NotificationManagement';
 
 const ChatConversation = ({ socket, userName, room }) => {
+    const [hasNotificationPermission, setHasNotificationPermission] = useState(false);
+    const [windowFocused, setWindowFocused] = useState(true);
     const [message, setMessage] = useState('');
     const [messages, setMessages] = useState([]);
     const [isConnected, setIsConnected] = useState(false);
@@ -24,17 +27,42 @@ const ChatConversation = ({ socket, userName, room }) => {
     const [showDeleteDialog, setShowDeleteDialog] = useState(false);
     const [messageToDelete, setMessageToDelete] = useState(null);
     const [unreadCount, setUnreadCount] = useState(0);
-    
+
     const fileInputRef = useRef(null);
     const messagesEndRef = useRef(null);
-
+    const textareaRef = useRef(null);
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     };
 
     useEffect(() => {
+        // Request notification permission when component mounts
+        const setupNotifications = async () => {
+            const hasPermission = await NotificationManager.requestPermission();
+            setHasNotificationPermission(hasPermission);
+        };
+
+        setupNotifications();
+
+        // Window focus handlers
+        const handleFocus = () => setWindowFocused(true);
+        const handleBlur = () => setWindowFocused(false);
+
+        window.addEventListener('focus', handleFocus);
+        window.addEventListener('blur', handleBlur);
+        const textArea = textareaRef.current;
+        if (!textArea) return;
+        textArea.style.height = '44px';
+        const scrollHeight = textArea.scrollHeight;
+        textArea.style.height = Math.min(scrollHeight, 100) + "px";
         scrollToBottom();
-    }, [messages]);
+        return () => {
+            window.removeEventListener('focus', handleFocus);
+            window.removeEventListener('blur', handleBlur);
+        };
+
+
+    }, [messages, message]);
 
     useEffect(() => {
         if (!socket) return;
@@ -52,12 +80,23 @@ const ChatConversation = ({ socket, userName, room }) => {
             console.log('Socket disconnected');
         };
 
-        const onReceiveMessage = (data) => {
+        const onReceiveMessage = async (data) => {
             setMessages(prev => [...prev, { ...data, isSender: data.author === userName }]);
             if (!document.hasFocus()) {
                 setUnreadCount(prev => prev + 1);
             }
+            if (!windowFocused && hasNotificationPermission) {
+                await NotificationManager.showNotification(
+                    `New message from ${data.author}`,
+                    {
+                        body: data.message,
+                        tag: `chat-${room}`, // Prevents duplicate notifications
+                        renotify: true,      // Shows new notification even with same tag
+                    }
+                );
+            }
         };
+        console.log(Notification.permission);
 
         socket.on('connect', onConnect);
         socket.on('disconnect', onDisconnect);
@@ -78,10 +117,10 @@ const ChatConversation = ({ socket, userName, room }) => {
                 socket.off('message_deleted', handleMessageDelete);
             }
         };
-    }, [socket, userName, room]);
+    }, [socket, userName, room, windowFocused, hasNotificationPermission]);
 
     const handleMessageEdit = (data) => {
-        setMessages(prev => prev.map(m => 
+        setMessages(prev => prev.map(m =>
             m.id === data.id ? { ...data, isSender: m.isSender } : m
         ));
     };
@@ -132,7 +171,7 @@ const ChatConversation = ({ socket, userName, room }) => {
 
     const sendMessage = async (e) => {
         e.preventDefault();
-        
+
         if (!socket || !isConnected) return;
         if (message.trim() === '' && !selectedFile) return;
 
@@ -144,7 +183,7 @@ const ChatConversation = ({ socket, userName, room }) => {
                     reader.onloadend = () => resolve(reader.result);
                     reader.readAsDataURL(selectedFile);
                 });
-                
+
                 attachment = {
                     name: selectedFile.name,
                     type: selectedFile.type,
@@ -157,8 +196,8 @@ const ChatConversation = ({ socket, userName, room }) => {
                 roomName: room,
                 author: userName,
                 message: message.trim(),
-                time: new Date().toLocaleTimeString([], { 
-                    hour: '2-digit', 
+                time: new Date().toLocaleTimeString([], {
+                    hour: '2-digit',
                     minute: '2-digit'
                 }),
                 attachment,
@@ -167,7 +206,7 @@ const ChatConversation = ({ socket, userName, room }) => {
 
             if (editingMessageId) {
                 socket.emit("edit_message", messageData);
-                setMessages(prev => prev.map(m => 
+                setMessages(prev => prev.map(m =>
                     m.id === editingMessageId ? { ...messageData, isSender: true } : m
                 ));
                 setEditingMessageId(null);
@@ -202,25 +241,27 @@ const ChatConversation = ({ socket, userName, room }) => {
                     {isConnected ? 'Connected' : 'Disconnected'}
                 </div>
             </div>
-            
-            <div className="h-[400px] overflow-y-auto p-4 bg-gray-50">
-                <div className="flex flex-col">
-                    {messages.map((msg) => (
-                        <MessageBubble 
-                            key={msg.id} 
-                            data={msg}
-                            onEdit={startEditing}
-                            onDelete={initiateDelete}
-                        />
-                    ))}
-                    <div ref={messagesEndRef} />
+            <div className="relative">
+                <div className="h-[400px] overflow-y-auto  p-4 bg-gray-50">
+                    <div className=" flex flex-col">
+                        {messages.map((msg) => (
+                            <MessageBubble
+                                key={msg.id}
+                                data={msg}
+                                onEdit={startEditing}
+                                onDelete={initiateDelete}
+                            />
+                        ))}
+                    </div>
                 </div>
+                <div className='absolute bottom-0 right-5' ref={messagesEndRef} > <span>Down</span> </div>
             </div>
+
 
             <form onSubmit={sendMessage} className="border-t p-4 bg-white rounded-b-lg">
                 <div className="flex items-center gap-2">
                     <div className="flex items-end gap-2">
-                    <button
+                        <button
                             type="button"
                             onClick={() => setShowEmojiPicker(!showEmojiPicker)}
                             className="p-2 text-gray-500 hover:text-gray-700"
@@ -237,6 +278,7 @@ const ChatConversation = ({ socket, userName, room }) => {
                     </div>
                     <div className="flex-1 flex item-center">
                         <textarea
+                            ref={textareaRef}
                             value={message}
                             onChange={(e) => setMessage(e.target.value)}
                             placeholder="Type a message..."
@@ -258,12 +300,12 @@ const ChatConversation = ({ socket, userName, room }) => {
                             </div>
                         )}
                     </div>
-                        <button
-                            type="submit"
-                            className="bg-blue-500 text-white p-2 rounded-lg hover:bg-blue-600"
-                        >
-                            <Send size={20} />
-                        </button>
+                    <button
+                        type="submit"
+                        className="bg-blue-500 text-white p-2 rounded-lg hover:bg-blue-600"
+                    >
+                        <Send size={20} />
+                    </button>
                 </div>
                 <input
                     type="file"
@@ -283,7 +325,7 @@ const ChatConversation = ({ socket, userName, room }) => {
                 )}
             </form>
 
-            <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+            <AlertDialog open={showDeleteDialog}  onOpenChange={setShowDeleteDialog}>
                 <AlertDialogContent>
                     <AlertDialogHeader>
                         <AlertDialogTitle>Delete Message</AlertDialogTitle>

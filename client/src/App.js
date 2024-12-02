@@ -110,6 +110,11 @@ const App = () => {
             className="p-2 border border-indigo-500 w-full rounded"
           />
         </div>
+        {connectionError && (
+        <div className="text-red-500 text-left mb-1">
+          {connectionError}
+        </div>
+      )}
         <button
           className="bg-indigo-500 text-white px-3 py-2 w-full rounded hover:bg-indigo-600 transition-colors">
           Continue...
@@ -161,11 +166,7 @@ const App = () => {
 
   return (
     <div className="container mx-auto p-4">
-      {connectionError && (
-        <div className="text-red-500 text-center mb-4">
-          {connectionError}
-        </div>
-      )}
+    
 
       {step === 'username' && renderUsernameStep()}
       {step === 'select-user' && renderUserSelection()}
